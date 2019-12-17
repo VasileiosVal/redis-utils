@@ -4,67 +4,61 @@
 
 const Redis = require('ioredis');
 const fs = require('fs');
-const { parser } = require('stream-json/Parser');
-const { argv } = require('yargs')
+const {
+  argv
+} = require('yargs')
   .default('h', '127.0.0.1')
   .default('p', 6379)
+  .default('d', 0)
   .default('filename', 'dump.json');
 
 const host = argv.h;
 const port = argv.p;
-const { filename } = argv;
+const {
+  filename
+} = argv;
 
-const startTime = new Date();
-let key;
-let value;
-let keysCount = 0;
-const promises = [];
 
 const redis = new Redis({
   host,
-  port
-});
+  port,
+  db: 0});
 
-const pipeline = fs.createReadStream(filename).pipe(parser());
-pipeline.on('data', (data) => {
-  switch (data.name) {
-    case 'keyValue':
-      key = data.value;
-      break;
-    case 'stringValue':
-      ({ value } = data);
-      process.stdout.clearLine();
-      process.stdout.cursorTo(0);
-      keysCount += 1;
-      process.stdout.write(`Adding ${keysCount} keys`);
-      promises.push(redis.set(key, value));
-      break;
-      // no default
+
+const dumpFile = fs.readFileSync(filename);
+const data = JSON.parse(dumpFile);
+
+const executeParsing = () => {
+  try{
+    for (let chunk of data) {
+      for (let key of Object.keys(chunk)) {
+        switch(chunk[key].type){
+          case 'hash':
+            redis.hmset(key, {...chunk[key].value});
+            break;
+          case 'set':
+            redis.sadd(key, [...chunk[key].value]);
+            break;
+          case 'list':
+            redis.lpush(key, [...chunk[key].value]);
+            break;
+          case 'string':
+            redis.set(key, chunk[key].value);
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    console.log(`Number of keys added: ${res.length}`);
+  } catch(err){
+    console.log('An error occured', err);
+  } finally {
+    const executionTimeMs = new Date() - startTime;
+    const executionTimeStr = millisecondsToStr(executionTimeMs);
+    console.info(`\nExecution time: ${executionTimeStr}`);
   }
-});
-pipeline.on('end', () => {
-  console.log('end parsing');
-  Promise.all(promises)
-    .then((res) => {
-      console.log(`Number of keys added: ${res.length}`);
-
-      const executionTimeMs = new Date() - startTime;
-      const executionTimeStr = millisecondsToStr(executionTimeMs);
-      console.info(`\nExecution time: ${executionTimeStr}`);
-
-      process.exit();
-    })
-    .catch((err) => {
-      console.log(err);
-
-      const executionTimeMs = new Date() - startTime;
-      const executionTimeStr = millisecondsToStr(executionTimeMs);
-      console.info(`\nExecution time: ${executionTimeStr}`);
-
-      process.exit(1);
-    });
-});
-
+}
 
 function millisecondsToStr(milliseconds) {
   function numberEnding(number) {
@@ -87,3 +81,6 @@ function millisecondsToStr(milliseconds) {
   }
   return 'Less than a second';
 }
+
+
+executeParsing();
